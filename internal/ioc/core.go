@@ -2,6 +2,7 @@ package ioc
 
 import (
 	"fmt"
+	"github.com/sakuradon99/gokit/internal/db"
 	"github.com/spf13/viper"
 	"reflect"
 	"unsafe"
@@ -15,6 +16,7 @@ type Container interface {
 type ContainerImpl struct {
 	objectPool    *ObjectPool
 	interfacePool *InterfacePool
+	loaded        bool
 }
 
 func NewContainerImpl() *ContainerImpl {
@@ -37,7 +39,7 @@ func (c *ContainerImpl) Register(object any, opts ...RegisterOption) error {
 	}
 
 	var objectID string
-	var isFunc bool
+	var obj *Object
 
 	if ot.Kind() == reflect.Func {
 		if ot.NumOut() > 2 || ot.NumOut() == 2 && ot.Out(1).Name() != "error" {
@@ -45,13 +47,14 @@ func (c *ContainerImpl) Register(object any, opts ...RegisterOption) error {
 		}
 		ret := ot.Out(0).Elem()
 		objectID = genObjectID(ret.PkgPath(), ret.Name(), options.Name)
-		isFunc = true
+		obj = NewObjectFromFunc(objectID, options.Name, object)
 	} else {
 		ot = ot.Elem()
 		objectID = genObjectID(ot.PkgPath(), ot.Name(), options.Name)
+		obj = NewObject(objectID, options.Name, object)
 	}
 
-	err := c.objectPool.Add(NewObject(objectID, options.Name, object, isFunc))
+	err := c.objectPool.Add(obj)
 	if err != nil {
 		return err
 	}
@@ -72,7 +75,7 @@ func (c *ContainerImpl) Register(object any, opts ...RegisterOption) error {
 }
 
 func (c *ContainerImpl) GetObject(name string, t any) (any, error) {
-	err := c.refresh()
+	err := c.load()
 	if err != nil {
 		return nil, err
 	}
@@ -88,20 +91,28 @@ func (c *ContainerImpl) GetObject(name string, t any) (any, error) {
 	return object.obj, nil
 }
 
-func (c *ContainerImpl) refresh() error {
-	viper.AddConfigPath("./config")
-	viper.SetConfigName("app")
-	viper.SetConfigType("yaml")
+func (c *ContainerImpl) load() error {
+	if c.loaded {
+		return nil
+	}
 
-	err := viper.ReadInConfig()
+	err := c.registerDB()
 	if err != nil {
 		return err
 	}
 
-	objects := c.objectPool.List()
+	err = c.readConfig()
+	if err != nil {
+		return err
+	}
 
-	for _, object := range objects {
+	requiredObjects := c.objectPool.List()
+
+	for _, object := range requiredObjects {
 		if object.injected {
+			continue
+		}
+		if object.optional {
 			continue
 		}
 		err := c.inject(object)
@@ -217,6 +228,34 @@ func (c *ContainerImpl) injectStruct(object *Object) error {
 	}
 
 	object.SetInjected(true)
+	return nil
+}
+
+func (c *ContainerImpl) registerDB() error {
+	err := c.Register(new(db.Config), Optional())
+	if err != nil {
+		return err
+	}
+	err = c.Register(db.InitGorm, Optional())
+	if err != nil {
+		return err
+	}
+	err = c.Register(new(db.ManagerImpl), Implement(new(db.Manager)), Optional())
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (c *ContainerImpl) readConfig() error {
+	viper.AddConfigPath("./config")
+	viper.SetConfigName("app")
+	viper.SetConfigType("yaml")
+
+	err := viper.ReadInConfig()
+	if err != nil {
+		return err
+	}
 	return nil
 }
 

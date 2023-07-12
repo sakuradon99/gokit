@@ -10,12 +10,17 @@ type Object struct {
 	name     string
 	obj      any
 	injected bool
+	optional bool
 	isFunc   bool
-	funcRet  any
+	function any
 }
 
-func NewObject(id string, name string, obj any, isFunc bool) *Object {
-	return &Object{id: id, name: name, obj: obj, isFunc: isFunc}
+func NewObject(id string, name string, obj any) *Object {
+	return &Object{id: id, name: name, obj: obj}
+}
+
+func NewObjectFromFunc(id string, name string, function any) *Object {
+	return &Object{id: id, name: name, function: function, isFunc: true}
 }
 
 func (o *Object) SetInjected(injected bool) {
@@ -23,26 +28,23 @@ func (o *Object) SetInjected(injected bool) {
 }
 
 func (o *Object) SetFuncRet(ret any) {
-	o.funcRet = ret
+	o.obj = ret
 }
 
 func (o *Object) GetReflectType() reflect.Type {
 	if o.isFunc {
-		return reflect.TypeOf(o.obj)
+		return reflect.TypeOf(o.function)
 	}
 	return reflect.TypeOf(o.obj).Elem()
 }
 func (o *Object) GetReflectValue() reflect.Value {
 	if o.isFunc {
-		return reflect.ValueOf(o.obj)
+		return reflect.ValueOf(o.function)
 	}
 	return reflect.ValueOf(o.obj).Elem()
 }
 
 func (o *Object) GetValue() any {
-	if o.isFunc {
-		return o.funcRet
-	}
 	return o.obj
 }
 
