@@ -104,12 +104,13 @@ func (o *Optional[Value]) Scan(value any) error {
 		return nil
 	}
 
-	o.exists = true
-	var ok bool
-	o.value, ok = value.(Value)
+	val, ok := value.(Value)
 	if !ok {
 		return fmt.Errorf("failed to scan a '%v' into an Optional", value)
 	}
+
+	o.exists = true
+	o.value = val
 
 	return nil
 }

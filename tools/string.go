@@ -10,13 +10,6 @@ func StringToInt(str string) int {
 	return num
 }
 
-func StartWith(str string, sub string) bool {
-	if len(str) < len(sub) {
-		return false
-	}
-	return str[:len(sub)] == sub
-}
-
 func StringIn(str string, arr ...string) bool {
 	for _, s := range arr {
 		if str == s {
