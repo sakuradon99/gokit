@@ -6,7 +6,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func InitGorm(config Config) (*gorm.DB, error) {
+func InitGorm(config *Config) (*gorm.DB, error) {
 	dsn := fmt.Sprintf(
 		"host=%s user=%s password=%s dbname=%s port=%d sslmode=disable TimeZone=Asia/Shanghai",
 		config.host,
