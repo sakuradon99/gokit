@@ -51,6 +51,9 @@ type LogField struct {
 }
 
 func Field(key string, val any) LogField {
+	if err, ok := val.(error); ok {
+		return LogField{Key: key, Value: err.Error()}
+	}
 	return LogField{Key: key, Value: val}
 }
 
