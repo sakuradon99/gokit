@@ -4,15 +4,20 @@ import (
 	"context"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"strings"
 )
 
 const keyGinTraceID = "trace_id"
+
+func generateTraceID() string {
+	return strings.ReplaceAll(uuid.NewString(), "-", "")
+}
 
 func GinMiddleware() func(c *gin.Context) {
 	return func(c *gin.Context) {
 		traceID, ok := c.Value("trace_id").(string)
 		if !ok || traceID == "" {
-			traceID = uuid.NewString()
+			traceID = generateTraceID()
 			c.Set(keyGinTraceID, traceID)
 		}
 		c.Header("X-Trace-ID", traceID)
@@ -21,8 +26,7 @@ func GinMiddleware() func(c *gin.Context) {
 }
 
 func WithTraceID(ctx context.Context) context.Context {
-	traceID := uuid.NewString()
-	return context.WithValue(ctx, keyGinTraceID, traceID)
+	return context.WithValue(ctx, keyGinTraceID, generateTraceID())
 }
 
 func GetTraceID(ctx context.Context) string {
