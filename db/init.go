@@ -9,5 +9,5 @@ import (
 func init() {
 	ioc.Register[db.Config](ioc.Optional())
 	ioc.Register[gorm.DB](ioc.Constructor(db.InitGorm), ioc.Optional())
-	ioc.Register[db.ManagerImpl](ioc.Implement[Manager](), ioc.Conditional("#db != nil"))
+	ioc.Register[db.ManagerImpl](ioc.Conditional("#db != nil"))
 }
