@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/rifflock/lfshook"
 	"github.com/sakuradon99/gokit/trace"
 	"github.com/sakuradon99/ioc"
 	"github.com/sirupsen/logrus"
-	"gopkg.in/natefinch/lumberjack.v2"
 	"io"
 	"path"
 	"strings"
@@ -101,15 +101,6 @@ func newLogger(config *Config) *logrus.Logger {
 	if config.Path == "" {
 		config.Path = "log"
 	}
-	if config.RotationMaxSize == 0 {
-		config.RotationMaxSize = 50
-	}
-	if config.RotationMaxBackups == 0 {
-		config.RotationMaxBackups = 3
-	}
-	if config.RotationMaxAge == 0 {
-		config.RotationMaxAge = 28
-	}
 	if config.MaxBytes == 0 {
 		config.MaxBytes = 1024
 	}
@@ -125,81 +116,22 @@ func newLogger(config *Config) *logrus.Logger {
 		logger.SetOutput(io.Discard)
 	}
 
-	fileDebug := &lumberjack.Logger{
-		Filename:   path.Join(config.Path, "debug.log"),
-		MaxSize:    config.RotationMaxSize,
-		MaxBackups: config.RotationMaxBackups,
-		MaxAge:     config.RotationMaxAge,
+	pathMap := lfshook.PathMap{
+		debugLevel:  path.Join(config.Path, "debug.log"),
+		infoLevel:   path.Join(config.Path, "info.log"),
+		warnLevel:   path.Join(config.Path, "warn.log"),
+		errorLevel:  path.Join(config.Path, "error.log"),
+		dataLevel:   path.Join(config.Path, "data.log"),
+		accessLevel: path.Join(config.Path, "access.log"),
 	}
 
-	fileInfo := &lumberjack.Logger{
-		Filename:   path.Join(config.Path, "info.log"),
-		MaxSize:    config.RotationMaxSize,
-		MaxBackups: config.RotationMaxBackups,
-		MaxAge:     config.RotationMaxAge,
-	}
-
-	fileWarn := &lumberjack.Logger{
-		Filename:   path.Join(config.Path, "warn.log"),
-		MaxSize:    config.RotationMaxSize,
-		MaxBackups: config.RotationMaxBackups,
-		MaxAge:     config.RotationMaxAge,
-	}
-
-	fileError := &lumberjack.Logger{
-		Filename:   path.Join(config.Path, "error.log"),
-		MaxSize:    config.RotationMaxSize,
-		MaxBackups: config.RotationMaxBackups,
-		MaxAge:     config.RotationMaxAge,
-	}
-
-	fileData := &lumberjack.Logger{
-		Filename:   path.Join(config.Path, "data.log"),
-		MaxSize:    config.RotationMaxSize,
-		MaxBackups: config.RotationMaxBackups,
-		MaxAge:     config.RotationMaxAge,
-	}
-
-	fileAccess := &lumberjack.Logger{
-		Filename:   path.Join(config.Path, "access.log"),
-		MaxSize:    config.RotationMaxSize,
-		MaxBackups: config.RotationMaxBackups,
-		MaxAge:     config.RotationMaxAge,
-	}
-
-	logger.AddHook(&LevelFileHook{
-		levelToWriter: map[logrus.Level]*lumberjack.Logger{
-			debugLevel:  fileDebug,
-			infoLevel:   fileInfo,
-			warnLevel:   fileWarn,
-			errorLevel:  fileError,
-			dataLevel:   fileData,
-			accessLevel: fileAccess,
-		},
-		logFormatter: formatter,
-	})
+	logger.AddHook(&LevelFileHook{lfshook.NewHook(pathMap, formatter)})
 
 	return logger
 }
 
 type LevelFileHook struct {
-	levelToWriter map[logrus.Level]*lumberjack.Logger
-	logFormatter  logrus.Formatter
-}
-
-func (hook *LevelFileHook) Fire(entry *logrus.Entry) error {
-	writer, ok := hook.levelToWriter[entry.Level]
-	if !ok {
-		return fmt.Errorf("no log writer for level: %v", entry.Level)
-	}
-
-	formattedLog, err := hook.logFormatter.Format(entry)
-	if err != nil {
-		return err
-	}
-
-	_, err = writer.Write(formattedLog)
-	return err
+	*lfshook.LfsHook
 }
 
 func (hook *LevelFileHook) Levels() []logrus.Level {
