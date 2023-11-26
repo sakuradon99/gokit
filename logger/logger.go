@@ -8,8 +8,10 @@ import (
 	"github.com/sakuradon99/ioc"
 	"github.com/sirupsen/logrus"
 	"gopkg.in/natefinch/lumberjack.v2"
+	"io"
 	"path"
 	"strings"
+	"sync"
 )
 
 var defaultLogger *logrus.Logger
@@ -32,17 +34,21 @@ var levelNames = map[logrus.Level]string{
 	debugLevel:  "DEBUG",
 }
 
+var loadOnce sync.Once
+
 func load() {
 	if defaultLogger != nil {
 		return
 	}
 
-	logger, err := ioc.GetObject[logrus.Logger]("")
-	if err != nil {
-		panic(err)
-	}
+	loadOnce.Do(func() {
+		logger, err := ioc.GetObject[logrus.Logger]("")
+		if err != nil {
+			panic(err)
+		}
 
-	defaultLogger = logger.(*logrus.Logger)
+		defaultLogger = logger.(*logrus.Logger)
+	})
 }
 
 type LogField struct {
@@ -58,6 +64,7 @@ func Field(key string, val any) LogField {
 }
 
 type logFormatter struct {
+	maxBytes int
 }
 
 func (l *logFormatter) Format(entry *logrus.Entry) ([]byte, error) {
@@ -77,71 +84,87 @@ func (l *logFormatter) Format(entry *logrus.Entry) ([]byte, error) {
 		jsonBytes, _ := json.Marshal(entry.Data)
 		sb.WriteString("|" + string(jsonBytes))
 	}
+
+	if sb.Len() > l.maxBytes {
+		s := sb.String()
+		sb = &strings.Builder{}
+		sb.WriteString(s[:l.maxBytes])
+		sb.WriteString(fmt.Sprintf("...(%d bytes truncated)", len(s)-l.maxBytes))
+	}
+
 	sb.WriteByte('\n')
 
 	return []byte(sb.String()), nil
 }
 
 func newLogger(config *Config) *logrus.Logger {
-	logger := logrus.New()
-	logFormatter := &logFormatter{}
-
-	logger.SetLevel(debugLevel)
-	logger.SetFormatter(logFormatter)
-
 	if config.Path == "" {
 		config.Path = "log"
 	}
-	if config.MaxSize == 0 {
-		config.MaxSize = 50
+	if config.RotationMaxSize == 0 {
+		config.RotationMaxSize = 50
 	}
-	if config.MaxBackups == 0 {
-		config.MaxBackups = 3
+	if config.RotationMaxBackups == 0 {
+		config.RotationMaxBackups = 3
 	}
-	if config.MaxAge == 0 {
-		config.MaxAge = 28
+	if config.RotationMaxAge == 0 {
+		config.RotationMaxAge = 28
+	}
+	if config.MaxBytes == 0 {
+		config.MaxBytes = 1024
+	}
+
+	logger := logrus.New()
+	formatter := &logFormatter{
+		maxBytes: config.MaxBytes,
+	}
+
+	logger.SetLevel(debugLevel)
+	logger.SetFormatter(formatter)
+	if !config.EnableTerminalLog {
+		logger.SetOutput(io.Discard)
 	}
 
 	fileDebug := &lumberjack.Logger{
 		Filename:   path.Join(config.Path, "debug.log"),
-		MaxSize:    config.MaxSize,
-		MaxBackups: config.MaxBackups,
-		MaxAge:     config.MaxAge,
+		MaxSize:    config.RotationMaxSize,
+		MaxBackups: config.RotationMaxBackups,
+		MaxAge:     config.RotationMaxAge,
 	}
 
 	fileInfo := &lumberjack.Logger{
 		Filename:   path.Join(config.Path, "info.log"),
-		MaxSize:    config.MaxSize,
-		MaxBackups: config.MaxBackups,
-		MaxAge:     config.MaxAge,
+		MaxSize:    config.RotationMaxSize,
+		MaxBackups: config.RotationMaxBackups,
+		MaxAge:     config.RotationMaxAge,
 	}
 
 	fileWarn := &lumberjack.Logger{
 		Filename:   path.Join(config.Path, "warn.log"),
-		MaxSize:    config.MaxSize,
-		MaxBackups: config.MaxBackups,
-		MaxAge:     config.MaxAge,
+		MaxSize:    config.RotationMaxSize,
+		MaxBackups: config.RotationMaxBackups,
+		MaxAge:     config.RotationMaxAge,
 	}
 
 	fileError := &lumberjack.Logger{
 		Filename:   path.Join(config.Path, "error.log"),
-		MaxSize:    config.MaxSize,
-		MaxBackups: config.MaxBackups,
-		MaxAge:     config.MaxAge,
+		MaxSize:    config.RotationMaxSize,
+		MaxBackups: config.RotationMaxBackups,
+		MaxAge:     config.RotationMaxAge,
 	}
 
 	fileData := &lumberjack.Logger{
 		Filename:   path.Join(config.Path, "data.log"),
-		MaxSize:    config.MaxSize,
-		MaxBackups: config.MaxBackups,
-		MaxAge:     config.MaxAge,
+		MaxSize:    config.RotationMaxSize,
+		MaxBackups: config.RotationMaxBackups,
+		MaxAge:     config.RotationMaxAge,
 	}
 
 	fileAccess := &lumberjack.Logger{
 		Filename:   path.Join(config.Path, "access.log"),
-		MaxSize:    config.MaxSize,
-		MaxBackups: config.MaxBackups,
-		MaxAge:     config.MaxAge,
+		MaxSize:    config.RotationMaxSize,
+		MaxBackups: config.RotationMaxBackups,
+		MaxAge:     config.RotationMaxAge,
 	}
 
 	logger.AddHook(&LevelFileHook{
@@ -153,7 +176,7 @@ func newLogger(config *Config) *logrus.Logger {
 			dataLevel:   fileData,
 			accessLevel: fileAccess,
 		},
-		logFormatter: logFormatter,
+		logFormatter: formatter,
 	})
 
 	return logger
