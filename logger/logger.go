@@ -6,15 +6,13 @@ import (
 	"fmt"
 	"github.com/rifflock/lfshook"
 	"github.com/sakuradon99/gokit/trace"
-	"github.com/sakuradon99/ioc"
 	"github.com/sirupsen/logrus"
 	"io"
 	"path"
 	"strings"
-	"sync"
 )
 
-var defaultLogger *logrus.Logger
+var defaultLogger = logrus.New()
 
 const (
 	infoLevel logrus.Level = iota + 100
@@ -32,23 +30,6 @@ var levelNames = map[logrus.Level]string{
 	dataLevel:   "DATA",
 	accessLevel: "ACCESS",
 	debugLevel:  "DEBUG",
-}
-
-var loadOnce sync.Once
-
-func load() {
-	if defaultLogger != nil {
-		return
-	}
-
-	loadOnce.Do(func() {
-		logger, err := ioc.GetObject[logrus.Logger]("")
-		if err != nil {
-			panic(err)
-		}
-
-		defaultLogger = logger.(*logrus.Logger)
-	})
 }
 
 type LogField struct {
@@ -126,6 +107,7 @@ func newLogger(config *Config) *logrus.Logger {
 	}
 
 	logger.AddHook(&LevelFileHook{lfshook.NewHook(pathMap, formatter)})
+	defaultLogger = logger
 
 	return logger
 }
@@ -154,31 +136,25 @@ func getLogFields(kvs []LogField) logrus.Fields {
 }
 
 func Debug(ctx context.Context, message string, kv ...LogField) {
-	load()
 	defaultLogger.WithContext(ctx).WithFields(getLogFields(kv)).Log(debugLevel, message)
 }
 
 func Info(ctx context.Context, message string, kv ...LogField) {
-	load()
 	defaultLogger.WithContext(ctx).WithFields(getLogFields(kv)).Log(infoLevel, message)
 }
 
 func Warn(ctx context.Context, message string, kv ...LogField) {
-	load()
 	defaultLogger.WithContext(ctx).WithFields(getLogFields(kv)).Log(warnLevel, message)
 }
 
 func Error(ctx context.Context, message string, kv ...LogField) {
-	load()
 	defaultLogger.WithContext(ctx).WithFields(getLogFields(kv)).Log(errorLevel, message)
 }
 
 func Data(ctx context.Context, kv ...LogField) {
-	load()
 	defaultLogger.WithContext(ctx).WithFields(getLogFields(kv)).Log(dataLevel)
 }
 
 func Access(ctx context.Context, kv ...LogField) {
-	load()
 	defaultLogger.WithContext(ctx).WithFields(getLogFields(kv)).Log(accessLevel)
 }
