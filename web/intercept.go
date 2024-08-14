@@ -162,6 +162,7 @@ func (it *Interceptor) handleResponse(c *gin.Context, response reflect.Value, st
 		c.JSON(statusCode, make([]any, 0))
 		return
 	}
+	// TODO refactor the view handler
 	if v, ok := response.Interface().(View); ok {
 		if it.tplSuffix != "" && !strings.HasSuffix(v.Tpl, it.tplSuffix) {
 			v.Tpl = v.Tpl + it.tplSuffix

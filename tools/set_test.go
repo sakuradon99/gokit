@@ -6,7 +6,7 @@ import (
 )
 
 func Test_Set(t *testing.T) {
-	set := NewSet[int]()
+	set := NewUnstableSet[int]()
 	set.Put(1)
 	set.Put(2)
 
