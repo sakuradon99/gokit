@@ -1,17 +1,19 @@
 package web
 
 import (
-	"fmt"
+	"context"
 	"github.com/gin-gonic/gin"
-	"github.com/go-playground/validator/v10"
+	"github.com/sakuradon99/gokit/opt"
 	"net/http"
 	"reflect"
-	"runtime"
-	"strconv"
 	"strings"
 )
 
-var validate = validator.New()
+var (
+	typeGinContext = reflect.TypeOf((*gin.Context)(nil))
+	typeContext    = reflect.TypeOf((*context.Context)(nil)).Elem()
+	typeError      = reflect.TypeOf((*error)(nil)).Elem()
+)
 
 type Interceptor struct {
 	tplSuffix     string
@@ -29,141 +31,123 @@ func NewInterceptor(options ...Options) *Interceptor {
 func (it *Interceptor) Intercept(f any) gin.HandlerFunc {
 	ft := reflect.TypeOf(f)
 	fv := reflect.ValueOf(f)
-
-	fName := runtime.FuncForPC(fv.Pointer()).Name()
-	if !validateHandlerFunc(ft) {
-		panic(fmt.Errorf("wrong handler func: %s", fName))
-	}
-
 	ftNumIn := ft.NumIn()
 
-	successHTTPCode := http.StatusOK
-	var binders []binder
-	var err error
-	if ft.NumIn() == 2 {
-		p := reflect.New(ft.In(1))
-		pe := p.Elem()
-		for i := 0; i < pe.NumField(); i++ {
-			tag := pe.Type().Field(i).Tag
-			defaultVal := tag.Get("default")
-			if path := tag.Get("path"); path != "" {
-				binders = append(binders, &pathBinder{
-					field:      i,
-					path:       path,
-					defaultVal: defaultVal,
-				})
-			} else if query := tag.Get("query"); query != "" {
-				binders = append(binders, &queryBinder{
-					field:      i,
-					query:      query,
-					defaultVal: defaultVal,
-				})
-			} else if form := tag.Get("form"); form != "" {
-				binders = append(binders, &formBinder{
-					field:      i,
-					form:       form,
-					defaultVal: defaultVal,
-				})
-			} else if request := tag.Get("request"); request != "" {
-				if request == "json" {
-					binders = append(binders, &requestJSONBinder{
-						field: i,
-						body:  pe.Field(i).Type(),
-					})
-				}
-			} else if file := tag.Get("file"); file != "" {
-				binders = append(binders, &fileBinder{
-					field: i,
-					file:  file,
-				})
-			} else if files := tag.Get("files"); files != "" {
-				binders = append(binders, &multipleFileBinder{
-					field: i,
-					files: files,
-				})
-			} else if code := tag.Get("success"); code != "" {
-				successHTTPCode, err = strconv.Atoi(code)
-				if err != nil || successHTTPCode < 100 || successHTTPCode > 999 {
-					panic(fmt.Errorf("invalid http error code: %s in func %s", code, fName))
-				}
-			}
+	var paramBuilders []paramBuilder
+	for i := 0; i < ftNumIn; i++ {
+		field := ft.In(i)
+		if field.Kind() == reflect.Struct {
+			paramBuilders = append(paramBuilders, it.buildStructParamBuilder(field))
+			continue
 		}
+		if field == typeGinContext || field.Implements(typeContext) {
+			paramBuilders = append(paramBuilders, newContextParamBuilder())
+			continue
+		}
+		paramBuilders = append(paramBuilders, newDefaultParamBuilder(field))
 	}
 
 	return func(c *gin.Context) {
-		incomes := make([]reflect.Value, ftNumIn)
-		incomes[0] = reflect.ValueOf(c)
-
-		if ftNumIn == 2 {
-			param := reflect.New(ft.In(1))
-			paramElem := param.Elem()
-			for _, b := range binders {
-				err := b.Bind(c, paramElem)
-				if err != nil {
-					handleError(c, err)
-					return
-				}
-			}
-
-			if validate.Struct(paramElem.Interface()) != nil {
-				handleError(c, ErrInvalidParams)
+		incomes := make([]reflect.Value, 0, ftNumIn)
+		for _, builder := range paramBuilders {
+			param, err := builder.Build(c)
+			if err != nil {
+				it.handleError(c, err)
 				return
 			}
-			incomes[1] = paramElem
+			incomes = append(incomes, param)
 		}
 
 		outcomes := fv.Call(incomes)
 
-		// if handler does not return parameters, return client success
-		if len(outcomes) == 0 {
-			c.Status(successHTTPCode)
+		resp := opt.Empty[reflect.Value]()
+		var err error
+		for _, outcome := range outcomes {
+			if outcome.Type().Implements(typeError) {
+				e, ok := outcome.Interface().(error)
+				if ok && e != nil {
+					err = e
+				}
+			} else {
+				resp = opt.Of(outcome)
+			}
+		}
+		if err != nil {
+			it.handleError(c, err)
 			return
 		}
 
-		response := outcomes[0]
-		errResponse := outcomes[len(outcomes)-1]
+		it.handleResponse(c, resp)
+	}
+}
 
-		if err, ok := errResponse.Interface().(error); ok {
-			handleError(c, err)
-			return
+func (it *Interceptor) buildStructParamBuilder(rtp reflect.Type) *structParamBuilder {
+	var binders []binder
+	for i := 0; i < rtp.NumField(); i++ {
+		field := rtp.Field(i)
+		tag := field.Tag
+		defaultVal := tag.Get("default")
+		if path := tag.Get("path"); path != "" {
+			binders = append(binders, &pathBinder{
+				field:      i,
+				path:       path,
+				defaultVal: defaultVal,
+			})
+		} else if query := tag.Get("query"); query != "" {
+			binders = append(binders, &queryBinder{
+				field:      i,
+				query:      query,
+				defaultVal: defaultVal,
+			})
+		} else if form := tag.Get("form"); form != "" {
+			binders = append(binders, &formBinder{
+				field:      i,
+				form:       form,
+				defaultVal: defaultVal,
+			})
+		} else if request := tag.Get("request"); request != "" {
+			if request == "json" {
+				binders = append(binders, &requestJSONBinder{
+					field: i,
+					body:  field.Type,
+				})
+			}
+		} else if file := tag.Get("file"); file != "" {
+			binders = append(binders, &fileBinder{
+				field: i,
+				file:  file,
+			})
+		} else if files := tag.Get("files"); files != "" {
+			binders = append(binders, &multipleFileBinder{
+				field: i,
+				files: files,
+			})
 		}
-
-		it.handleResponse(c, response, successHTTPCode)
 	}
+
+	return newStructParamBuilder(rtp, binders)
 }
 
-func validateHandlerFunc(ft reflect.Type) bool {
-	if ft.Kind() != reflect.Func || ft.NumIn() < 1 || ft.NumIn() > 2 || ft.NumOut() > 2 {
-		return false
-	}
-	// the first income parameter must be context
-	if ft.In(0).Name() != "Context" {
-		return false
-	}
-	// if handler return 2 parameters, the second parameter must be error
-	if ft.NumOut() == 2 && ft.Out(1).Name() != "error" {
-		return false
-	}
-
-	return true
-}
-
-func handleError(c *gin.Context, err error) {
+func (it *Interceptor) handleError(c *gin.Context, err error) {
 	_ = c.Error(err)
 	c.Abort()
 }
 
-func (it *Interceptor) handleResponse(c *gin.Context, response reflect.Value, statusCode int) {
-	if (response.Kind() == reflect.Ptr || response.Kind() == reflect.Interface) && response.IsNil() {
-		c.Status(statusCode)
+func (it *Interceptor) handleResponse(c *gin.Context, resp opt.Optional[reflect.Value]) {
+	if !resp.Exists() {
+		c.Status(http.StatusNoContent)
 		return
 	}
-	if response.Kind() == reflect.Slice && response.IsNil() {
-		c.JSON(statusCode, make([]any, 0))
+	if (resp.Get().Kind() == reflect.Ptr || resp.Get().Kind() == reflect.Interface) && resp.Get().IsNil() {
+		c.Status(http.StatusNoContent)
+		return
+	}
+	if resp.Get().Kind() == reflect.Slice && resp.Get().IsNil() {
+		c.JSON(http.StatusOK, make([]any, 0))
 		return
 	}
 	// TODO refactor the view handler
-	if v, ok := response.Interface().(View); ok {
+	if v, ok := resp.Get().Interface().(View); ok {
 		if it.tplSuffix != "" && !strings.HasSuffix(v.Tpl, it.tplSuffix) {
 			v.Tpl = v.Tpl + it.tplSuffix
 		}
@@ -177,10 +161,10 @@ func (it *Interceptor) handleResponse(c *gin.Context, response reflect.Value, st
 		c.HTML(http.StatusOK, v.Tpl, v.Data)
 		return
 	}
-	if v, ok := response.Interface().(File); ok {
+	if v, ok := resp.Get().Interface().(File); ok {
 		c.File(v.Path)
 		return
 	}
 
-	c.JSON(statusCode, response.Interface())
+	c.JSON(http.StatusOK, resp.Get().Interface())
 }
